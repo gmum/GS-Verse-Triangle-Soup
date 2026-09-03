@@ -19,7 +19,7 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
 
     [SerializeField] private float returnFinishEpsilon = 1e-4f;
 
-    [SerializeField] private GSVerseSegmented _gsVerse;
+    [SerializeField] private GSBaseSegmented _gsVerse;
 
 
     void Awake()
@@ -28,7 +28,7 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
         try
         {
             if (_gsVerse == null)
-                _gsVerse = GetComponent<GSVerseSegmented>();
+                _gsVerse = GetComponent<GSBaseSegmented>();
 
             if (_gsVerse != null)
             {
@@ -37,7 +37,7 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
             }
             else
             {
-                Debug.LogError("GSVerse not found!");
+                Debug.LogError("GSBaseSegmented (GSVerseSegmented/GSVerseSegmentedPseudomesh) not found!");
             }
 
         }
@@ -268,12 +268,16 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
         var originalVertices = _gsVerse.originalVertices;
         var selectedVertexIndices = _gsVerse.selectedVertexIndices;
 
-        if (!displacedVertices.IsCreated || !originalVertices.IsCreated || !vertexVelocities.IsCreated)
+        if (!displacedVertices.IsCreated || !originalVertices.IsCreated)
         {
             Debug.Log("not adding force");
             return;
         }
 
+        if (!vertexVelocities.IsCreated)
+        {
+            Initialize(_gsVerse.mesh.vertices);
+        }
 
         var job = new AddDeformingForceJobSelected
         {
@@ -295,8 +299,5 @@ public class SplatSegmentedDeformate : MonoBehaviour, IDeformable
     public void AddPressForce(Vector3 point, Vector3 pressNormal)
     {
 
-
     }
-
-
 }

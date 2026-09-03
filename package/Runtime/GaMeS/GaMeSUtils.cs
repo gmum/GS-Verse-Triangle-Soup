@@ -965,10 +965,146 @@ namespace GaussianSplatting.Runtime.GaMeS
             }
         }
 
+        // Obtains Gaussian components from Triangle Soup.
+        // Look to "GaMeS: Mesh-Based Adapting and Modification of Gaussian Splatting"
+        // section "Distribution using Triangle Soup" for details.
+        // 
+        // These formulae are taken from that paper:
+        //   s2 = v2 - v1
+        //   s3 = v3 - v1
+        //   r1 = normalize(cross(s2, s3))
+        //   r2 = normalize(s2)
+        //   r3 = Gram-Schmidt(s3; r1, r2)
+        //   scale = [eps, |s2|, dot(s3, r3)]
+        public static (NativeArray<quaternion> rotations, NativeArray<float3> scalings)
+            CreateScaleRotationDataFromTriangleSoup(
+                NativeArray<float3> v1,
+                NativeArray<float3> v2,
+                NativeArray<float3> v3
+        ) {
+            int N = v1.Length;
+            var rotations = new NativeArray<quaternion>(N, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            var scalings  = new NativeArray<float3>(N,   Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
 
+            var job = new CreateScaleRotationFromTriangleSoupJob
+            {
+                m_V1 = v1,
+                m_V2 = v2,
+                m_V3 = v3,
+                Rotations = rotations,
+                Scalings = scalings,
+            };
+            job.Schedule(N, 8192).Complete();
+
+            return (rotations, scalings);
+        }
+
+        public static (NativeArray<quaternion> rotations, NativeArray<float3> scalings, JobHandle handle)
+            ScheduleCreateScaleRotationDataFromTriangleSoup(
+                NativeArray<float3> v1,
+                NativeArray<float3> v2,
+                NativeArray<float3> v3,
+                JobHandle dependency = default
+        ) {
+            int N = v1.Length;
+            var rotations = new NativeArray<quaternion>(N, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            var scalings  = new NativeArray<float3>(N,   Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            var job = new CreateScaleRotationFromTriangleSoupJob
+            {
+                m_V1 = v1,
+                m_V2 = v2,
+                m_V3 = v3,
+                Rotations = rotations,
+                Scalings = scalings,
+            };
+            return (rotations, scalings, job.Schedule(N, 8192, dependency));
+        }
+
+        [BurstCompile]
+        public struct CreateScaleRotationFromTriangleSoupJob : IJobParallelFor
+        {
+            [ReadOnly]  public NativeArray<float3> m_V1;
+            [ReadOnly]  public NativeArray<float3> m_V2;
+            [ReadOnly]  public NativeArray<float3> m_V3;
+            [WriteOnly] public NativeArray<quaternion> Rotations;
+            [WriteOnly] public NativeArray<float3> Scalings;
+
+            public void Execute(int i)
+            {
+                const float eps = 1e-8f;
+
+                float3 v1 = m_V1[i];
+                float3 v2 = m_V2[i];
+                float3 v3 = m_V3[i];
+
+                float3 s2 = v2 - v1;
+                float3 s3 = v3 - v1;
+
+                // r1 = normalize(cross(s2, s3))
+                float3 r1 = math.normalize(math.cross(s2, s3));
+
+                // r2 = normalize(s2)
+                float s2len = math.length(s2);
+                float3 r2 = s2 / math.max(s2len, eps);
+
+                // r3 = Gram-Schmidt(s3; r1, r2)
+                float3 s3orth = s3 - math.dot(s3, r1) * r1 - math.dot(s3, r2) * r2;
+                float3 r3 = math.normalize(s3orth);
+
+                // scale = [eps, |s2|, dot(s3, r3)], but downstream code expects log()
+                float scaleY = math.log(math.max(s2len, eps));
+                float scaleZ = math.log(math.max(math.dot(s3, r3), eps));
+                float3 scaleVec = new float3(math.log(eps), scaleY, scaleZ);
+
+
+                float3x3 rotMatrix = new float3x3(r1, r2, r3);
+                quaternion q = quaternion.LookRotationSafe(rotMatrix.c2, rotMatrix.c1);
+                // Downstream code expects (w,x,y,z), but we have (x,y,z,w)
+                quaternion reordered = new quaternion(q.value.w, q.value.x, q.value.y, q.value.z);
+
+                Rotations[i] = reordered;
+                Scalings[i]  = scaleVec;
+            }
+        }
+
+        public static (NativeArray<float3> v1, NativeArray<float3> v2, NativeArray<float3> v3)
+            SplitPackedTriangleSoup(NativeArray<float3> faceVertices, Allocator allocator = Allocator.Persistent)
+        {
+            int n = faceVertices.Length / 3;
+            var v1 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var v2 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var v3 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var job = new SplitPackedTriangleSoupJob { m_FaceVertices = faceVertices, m_V1 = v1, m_V2 = v2, m_V3 = v3 };
+            job.Schedule(n, 8192).Complete();
+            return (v1, v2, v3);
+        }
+
+        public static (NativeArray<float3> v1, NativeArray<float3> v2, NativeArray<float3> v3, JobHandle handle)
+            ScheduleSplitPackedTriangleSoup(NativeArray<float3> faceVertices, JobHandle dependency = default, Allocator allocator = Allocator.Persistent)
+        {
+            int n = faceVertices.Length / 3;
+            var v1 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var v2 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var v3 = new NativeArray<float3>(n, allocator, NativeArrayOptions.UninitializedMemory);
+            var job = new SplitPackedTriangleSoupJob { m_FaceVertices = faceVertices, m_V1 = v1, m_V2 = v2, m_V3 = v3 };
+            return (v1, v2, v3, job.Schedule(n, 8192, dependency));
+        }
+
+        [BurstCompile]
+        struct SplitPackedTriangleSoupJob : IJobParallelFor
+        {
+            [ReadOnly] public NativeArray<float3> m_FaceVertices;
+            [WriteOnly] public NativeArray<float3> m_V1;
+            [WriteOnly] public NativeArray<float3> m_V2;
+            [WriteOnly] public NativeArray<float3> m_V3;
+
+            public void Execute(int i)
+            {
+                int b = i * 3;
+                m_V1[i] = m_FaceVertices[b];
+                m_V2[i] = m_FaceVertices[b + 1];
+                m_V3[i] = m_FaceVertices[b + 2];
+            }
+        }
     }
-
-
-
-
 }
