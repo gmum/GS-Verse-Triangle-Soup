@@ -10,7 +10,7 @@ using Unity.Burst;
 
 public class SplatDeformate : MonoBehaviour, IDeformable
 {
-    [SerializeField] private GSVerse _gsVerse;
+    [SerializeField] private GSBase _gsVerse;
     public float springForce = 20f;
     public float damping = 5f;
 
@@ -26,7 +26,7 @@ public class SplatDeformate : MonoBehaviour, IDeformable
         try
         {
             if (_gsVerse == null)
-                _gsVerse = GetComponent<GSVerse>();
+                _gsVerse = GetComponent<GSBase>();
 
             if (_gsVerse != null)
             {
@@ -35,7 +35,7 @@ public class SplatDeformate : MonoBehaviour, IDeformable
             }
             else
             {
-                Debug.LogError("GSVerse not found!");
+                Debug.LogError("GSBase (GSVerse/GSVersePseudomesh) not found!");
             }
 
         }
@@ -294,8 +294,6 @@ public class SplatDeformate : MonoBehaviour, IDeformable
         }
     }
 
-
-
     [BurstCompile]
     struct AddPressForceJobSelected : IJobParallelFor
     {
@@ -344,12 +342,14 @@ public class SplatDeformate : MonoBehaviour, IDeformable
         }
     }
 
-
-
-
     public void AddDeformingForce(Vector3 point, Vector3 force)
     {
         if (!_gsVerse.displacedVertices.IsCreated) return;
+
+        if (!vertexVelocities.IsCreated)
+        {
+            Initialize(_gsVerse.mesh.vertices);
+        }
 
         Vector3 pointLocal = transform.InverseTransformPoint(point);
         Vector3 forceLocal = transform.InverseTransformDirection(force);
@@ -370,11 +370,8 @@ public class SplatDeformate : MonoBehaviour, IDeformable
         _gsVerse.needsRebuild = true;
     }
 
-
     public void AddPressForce(Vector3 point, Vector3 pressNormal)
     {
 
     }
-
-
 }

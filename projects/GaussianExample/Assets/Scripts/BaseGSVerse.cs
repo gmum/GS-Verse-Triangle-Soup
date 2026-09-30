@@ -222,8 +222,13 @@ public class GSBase : MonoBehaviour
     protected virtual void LoadAndSetupMesh()
     {
         // 4) Load source mesh and attach transformed mesh to our MeshFilter
-        var loaded = Resources.Load<GameObject>(_asset.objPath);
-        if (loaded == null) throw new InvalidOperationException($"Resources.Load failed for path '{_asset.objPath}'.");
+        LoadMeshFromResourcesAndAttach(_asset.objPath, _asset.useMeshLeftHandedCS);
+    }
+
+    protected void LoadMeshFromResourcesAndAttach(string objPath, bool useMeshLeftHandedCS)
+    {
+        var loaded = Resources.Load<GameObject>(objPath);
+        if (loaded == null) throw new InvalidOperationException($"Resources.Load failed for path '{objPath}'.");
 
         var child = loaded.transform.childCount > 0 ? loaded.transform.GetChild(0) : null;
         if (child == null) throw new InvalidOperationException("Loaded object has no child to get MeshFilter from.");
@@ -235,7 +240,7 @@ public class GSBase : MonoBehaviour
         Mesh meshCopy = Instantiate(meshFilter.sharedMesh);
 
         // Apply any transforms your utility needs
-        meshCopy = GaMeSUtils.TransformMesh(meshCopy, _asset.useMeshLeftHandedCS);
+        meshCopy = GaMeSUtils.TransformMesh(meshCopy, useMeshLeftHandedCS);
 
         // Assign it to your new MeshFilter
         MeshFilter addedMeshFilter = gameObject.AddComponent<MeshFilter>();
@@ -249,7 +254,7 @@ public class GSBase : MonoBehaviour
         _uniformScale = transform.localScale.y;
     }
 
-    void CreateRuntimeBuffers()
+    protected void CreateRuntimeBuffers()
     {
         var verts = _mesh.vertices;
         var tris = _mesh.triangles;
@@ -334,7 +339,7 @@ public class GSBase : MonoBehaviour
         CreateAsset();
     }
 
-    protected unsafe void CreateAsset()
+    protected virtual unsafe void CreateAsset()
     {
         if (_creator != null && _asset)
         {
@@ -346,6 +351,8 @@ public class GSBase : MonoBehaviour
     #endregion
 
     #region Helpers & cleanup
+
+    protected void InvokeOnInitVertices(Vector3[] vertices) => OnInitVertices?.Invoke(vertices);
 
     protected void RegisterNativeCleanup(Action cleanupAction)
     {
@@ -376,4 +383,3 @@ public class GSBase : MonoBehaviour
     }
     #endregion
 }
-

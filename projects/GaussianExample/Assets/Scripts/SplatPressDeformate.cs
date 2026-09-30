@@ -22,23 +22,24 @@ public class SplatPressDeformate : MonoBehaviour, IDeformable
     NativeArray<float3> vertexVelocities;
     private readonly List<Action> _deferredCleanup = new List<Action>();
 
-    [SerializeField] private GSVerse _gsVerse;
+    [SerializeField] private GSBase _gsVerse;
 
     void Awake()
     {
         try
         {
             if (_gsVerse == null)
-                _gsVerse = GetComponent<GSVerse>();
+                _gsVerse = GetComponent<GSBase>();
 
             if (_gsVerse != null)
             {
                 _gsVerse.OnInitVertices += Initialize;
-                _gsVerse.needsColliderUpdate = true;
+                if (_gsVerse is GSVerse gv)
+                    gv.needsColliderUpdate = true;
             }
             else
             {
-                Debug.LogError("GSVerse not found!");
+                Debug.LogError("GSBase (GSVerse/GSVersePseudomesh) not found!");
             }
 
         }
@@ -243,8 +244,6 @@ public class SplatPressDeformate : MonoBehaviour, IDeformable
         [ReadOnly] public float damageFalloff;
         [ReadOnly] public float damageMultiplier;
 
-
-
         public void Execute(int index)
         {
             int i = index;
@@ -276,7 +275,6 @@ public class SplatPressDeformate : MonoBehaviour, IDeformable
 
         }
     }
-
 
     private void OnDestroy()
     {
@@ -325,6 +323,4 @@ public class SplatPressDeformate : MonoBehaviour, IDeformable
             array = default;
         }
     }
-
-
 }

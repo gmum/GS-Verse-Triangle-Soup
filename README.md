@@ -1,16 +1,7 @@
 # GS-Verse  
 [![arXiv](https://img.shields.io/badge/arXiv-2510.11878-red)](https://arxiv.org/abs/2510.11878) [![Demo Scenes](https://img.shields.io/badge/Demo%20Scenes-Google%20Drive-green)](https://drive.google.com/file/d/1W1AyAVohk6ITPe2Faz6F3SPZgpz2_edP/view?usp=sharing)  [![ProjectPage](https://img.shields.io/badge/Website-anastasiya999.github.io/GSVerse/-blue)](https://anastasiya999.github.io/GS-Verse/)
 
-
-This repository hosts the **official implementation** of the paper:  
-> **GS-Verse: Mesh-based Gaussian Splatting for Physics-aware Interaction in Virtual Reality**  
-> _Authors_: Anastasiya Pechko, Piotr Borycki, Joanna Waczynska, Daniel Barczyk, Agata Szymańska, Sławomir Tadeja, Przemysław Spurek.  
-> _2025_  
-
-
-This project was developed based on an existing [Gaussian Splatting playground in Unity](https://github.com/aras-p/UnityGaussianSplatting).  
-For detailed implementation notes and additional context, see the related [README](/projects/readme.md).
-
+**This is a fork of [GS-Verse](https://github.com/Anastasiya999/GS-Verse)** extending it with a second GaMeS parameterization, the mesh-free **Triangle Soup / Pseudomesh** representation, alongside the original mesh-based pipeline. Developed as part of an MSc thesis at the Jagiellonian University (Daniel Barczyk, 2026, supervised by dr hab. Przemysław Spurek, prof. UJ). See [Pseudomesh (Triangle Soup) Extension](#pseudomesh-triangle-soup-extension) below for what's new, and the [upstream repository](https://github.com/Anastasiya999/GS-Verse) for the original GS-Verse system and paper.
 
 ## Table of Contents
 
@@ -20,8 +11,9 @@ For detailed implementation notes and additional context, see the related [READM
 4. [Asset creation](#asset-creation)
 5. [Video tutorial (soon)](#video-tutorial)
 6. [Segmenation & deformation tips (soon)](#segmentation-deformation)
-7. [Acknowledgments](#license) 
-8. [License](#license)  
+7. [Pseudomesh (Triangle Soup) Extension](#pseudomesh-triangle-soup-extension)
+8. [Acknowledgments](#license) 
+9. [License](#license)  
 
 ## Abstract 
 
@@ -37,8 +29,8 @@ For detailed hardware and software requirements, please refer to the [original p
 This project was developed and tested using the following setup:
 
 - **Unity version:** 2022.3.47  
-- **Platforms:** macOS (Metal) / Windows 11 Home  
-- **Headset:** Meta Quest Pro  
+- **Platforms:** Windows 11 Home  
+- **Headset:** Meta Quest 3 
 
 For the **user study**, the GS systems were deployed on a desktop PC equipped with:  
 - **CPU:** Intel® Core™ i7-14700K (3.40 GHz)  
@@ -52,8 +44,8 @@ For the **user study**, the GS systems were deployed on a desktop PC equipped wi
 
 ```bash
 # Clone or download this repository
-git clone https://github.com/Anastasiya999/GS-Verse.git
-cd GS-Verse
+git clone https://github.com/gmum/GS-Verse-Triangle-Soup.git
+cd GS-Verse-Triangle-Soup
 ```
 Open the project located at `projects/GaussianExample` in **Unity 2022.3** (other Unity 2022 versions may also work).
 
@@ -207,6 +199,48 @@ Now you can create your first **GS Verse** asset.
 
 ### Updates
 - 03.03.2026: fixed creation high, very high quality GaMeS assets; updated drive link with new assets. 
+
+
+## Pseudomesh (Triangle Soup) Extension
+
+In addition to the mesh-based GaMeS parameterization above, this fork adds support for GaMeS's second parameterization: **Triangle Soup**, also called **Pseudomesh**. Unlike the mesh-based path, it requires no pre-existing or separately reconstructed mesh. Its geometry is derived directly from an initial, mesh-free Gaussian Splatting reconstruction. Both parameterizations are fully supported side by side, nothing about the existing mesh-based pipeline documented above changes.
+
+### GaMeS-Side Asset Creation
+
+1. Train a mesh-free GaMeS model on your COLMAP dataset (no mesh required for this step).
+```bash
+python train.py --eval -s dataset -m output/dataset_flat --gs_type gs_flat -w
+```
+2. Run GaMeS's `scripts/save_pseudomesh.py` against the trained model checkpoint to extract the pseudomesh and its matching point cloud:
+```bash 
+python scripts/save_pseudomesh.py --model_path output/dataset_flat
+```
+
+This will produce the following file structure, where `scale_2.obj` is the pseudomesh created in step 2:
+```css
+dataset_flat/
+ ├── point_cloud/
+ │    └── iteration_30000/
+ │        └── point_cloud.ply
+ └── pseudomesh_info/
+      └── ours_30000/
+          └── scale_2.obj
+      ... 
+```
+
+### Unity Asset Creation
+1. Open Unity → Tools > Gaussian Splats > Create GaussianSplatAsset.
+2. Set Processing Mode to GaMeS-Pseudomesh.
+3. Check L-Handed Coordinate System if the pseudomesh was exported from Blender.
+4. Provide the point_cloud.ply (Point Cloud PLY File) and the scale_2.obj (Pseudomesh Resource Path, placed under Assets/Resources and referenced by name, same convention as the mesh-based path). 
+6. Choose your **Output Folder** and **Quality**.  
+7. Click **Create Asset** to create your Unity-compatible model.
+
+### Create a GS Verse Pseudomesh Asset in the scene
+
+1. In **Unity**, create a new **GameObject** in your scene.  
+2. Add the **Gaussian Splatting Renderer** component to it.  
+3. Assign the asset you created in the previous steps.
 
 
 ## Acknowledgments

@@ -26,7 +26,8 @@ namespace GaussianSplatting.Editor
         public enum InputMode
         {
             GaussianSplatting,
-            GaMeS
+            GaMeS,
+            GaMeSPseudomesh
         }
 
         // --- Member Variables (State) ---
@@ -111,14 +112,17 @@ namespace GaussianSplatting.Editor
             {
                 DrawStandardInputGUI();
             }
-            else
+            else if (m_SelectedMode == InputMode.GaMeS)
             {
                 DrawGaMeSInputGUI();
+            }
+            else if (m_SelectedMode == InputMode.GaMeSPseudomesh)
+            {
+                DrawGamesPseudomeshInputGUI();
             }
 
             DrawCommonOutputGUI();
             DrawCreateButtonAndError();
-
         }
 
         void ApplyQualityLevel()
@@ -207,10 +211,25 @@ namespace GaussianSplatting.Editor
             GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputPointCloudFile, m_ImportCameras);
 
             // --- 3. Load mesh object ---
-            Mesh mesh;
-            Transform meshTransform;
-            mesh = Instantiate(Resources.Load<GameObject>(m_MeshResourcePath).transform.GetChild(0).GetComponent<MeshFilter>().sharedMesh);
-            meshTransform = Resources.Load<GameObject>(m_MeshResourcePath).transform;
+            var loadedMeshGameObject = Resources.Load<GameObject>(m_MeshResourcePath);
+            if (loadedMeshGameObject == null)
+            {
+                m_ErrorMessage = $"Resources.Load failed for mesh path '{m_MeshResourcePath}'. " +
+                                 "Make sure the prefab is inside a folder named 'Resources'.";
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+            var childTransform = loadedMeshGameObject.transform.childCount > 0
+                ? loadedMeshGameObject.transform.GetChild(0) : null;
+            var meshFilter = childTransform != null ? childTransform.GetComponent<MeshFilter>() : null;
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+            {
+                m_ErrorMessage = $"Mesh prefab at '{m_MeshResourcePath}' has no child with a MeshFilter.";
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+            Mesh mesh = Instantiate(meshFilter.sharedMesh);
+            Transform meshTransform = loadedMeshGameObject.transform;
 
             // --- 4. Load model params ---
             int maxShDegree = 9;
@@ -219,14 +238,14 @@ namespace GaussianSplatting.Editor
             var numberOfSplatsPerFace = normalizedAlpha[0].Count;
 
             var gaMeSsplatParams = new GaMeSSplatDataParams(
-    normalizedAlpha,
-    scales,
-    mesh,
-    meshTransform,
-    maxShDegree,
-    numberOfSplatsPerFace,
-    m_useMeshLeftHandedCS
-);
+                normalizedAlpha,
+                scales,
+                mesh,
+                meshTransform,
+                maxShDegree,
+                numberOfSplatsPerFace,
+                m_useMeshLeftHandedCS
+            );
 
             using NativeArray<InputSplatData> inputSplats = CreateSplatDataFromMemory(gaMeSsplatParams);
             //We need to linearize our splats before ReplaceSplatData because LoadInputSplatFile do that
@@ -263,7 +282,7 @@ namespace GaussianSplatting.Editor
             }
 
             // --- 8. Create asset ---
-            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputPointCloudFile));
+            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputPointCloudFile)) + "_games";
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
             GaussianGaMeSSplatAsset asset = CreateInstance<GaussianGaMeSSplatAsset>();
@@ -309,6 +328,191 @@ namespace GaussianSplatting.Editor
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathOther),
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathCol),
                 AssetDatabase.LoadAssetAtPath<TextAsset>(pathSh), AssetDatabase.LoadAssetAtPath<TextAsset>(pathAlpha), AssetDatabase.LoadAssetAtPath<TextAsset>(pathScale));
+
+            var assetPath = $"{m_OutputFolder}/{baseName}.asset";
+            var savedAsset = CreateOrReplaceAsset(asset, assetPath);
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Saving assets", 0.99f);
+            AssetDatabase.SaveAssets();
+            EditorUtility.ClearProgressBar();
+
+            Selection.activeObject = savedAsset;
+        }
+
+        unsafe NativeArray<InputSplatData> CreatePseudomeshSplatData(List<Vector3> faceVertices)
+        {
+            int numFaces = faceVertices.Count / 3;
+
+            var v1 = new NativeArray<float3>(numFaces, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            var v2 = new NativeArray<float3>(numFaces, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            var v3 = new NativeArray<float3>(numFaces, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            for (int i = 0; i < numFaces; i++)
+            {
+                Vector3 a = faceVertices[i * 3];
+                Vector3 b = faceVertices[i * 3 + 1];
+                Vector3 c = faceVertices[i * 3 + 2];
+                v1[i] = new float3(a.x, a.y, a.z);
+                v2[i] = new float3(b.x, b.y, b.z);
+                v3[i] = new float3(c.x, c.y, c.z);
+            }
+
+            var (rotations, scalings) = GaMeSUtils.CreateScaleRotationDataFromTriangleSoup(v1, v2, v3);
+
+            var splats = new NativeArray<InputSplatData>(numFaces, Allocator.Persistent);
+            for (int i = 0; i < numFaces; i++)
+            {
+                splats[i] = new InputSplatData
+                {
+                    pos = v1[i],
+                    rot = rotations[i],
+                    scale = scalings[i],
+                };
+            }
+
+            v1.Dispose();
+            v2.Dispose();
+            v3.Dispose();
+            rotations.Dispose();
+            scalings.Dispose();
+
+            return splats;
+        }
+
+        unsafe void CreateGamesPseudomeshAsset()
+        {
+            m_ErrorMessage = null;
+
+            // --- 1. Input validation ---
+            if (string.IsNullOrWhiteSpace(m_InputPointCloudFile))
+            {
+                m_ErrorMessage = "Select input pointCloud PLY file";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(m_MeshResourcePath))
+            {
+                m_ErrorMessage = "Provide path to the pseudomesh obj file";
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(m_OutputFolder) || !m_OutputFolder.StartsWith("Assets/"))
+            {
+                m_ErrorMessage = $"Output folder must be within project, was '{m_OutputFolder}'";
+                return;
+            }
+            Directory.CreateDirectory(m_OutputFolder);
+
+            // --- 2. Load camera data ---
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Reading data files", 0.0f);
+            GaussianSplatAsset.CameraInfo[] cameras = LoadJsonCamerasFile(m_InputPointCloudFile, m_ImportCameras);
+
+            // --- 3. Load pseudomesh object ---
+            var loadedMeshGameObject = Resources.Load<GameObject>(m_MeshResourcePath);
+            if (loadedMeshGameObject == null)
+            {
+                m_ErrorMessage = $"Resources.Load failed for mesh path '{m_MeshResourcePath}'. " +
+                                 "Make sure the prefab is inside a folder named 'Resources'.";
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+            var childTransform = loadedMeshGameObject.transform.childCount > 0
+                ? loadedMeshGameObject.transform.GetChild(0) : null;
+            var meshFilter = childTransform != null ? childTransform.GetComponent<MeshFilter>() : null;
+            if (meshFilter == null || meshFilter.sharedMesh == null)
+            {
+                m_ErrorMessage = $"Mesh prefab at '{m_MeshResourcePath}' has no child with a MeshFilter.";
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+            Mesh mesh = Instantiate(meshFilter.sharedMesh);
+            Transform meshTransform = loadedMeshGameObject.transform;
+
+            // --- 4. Reconstruct pos/rot/scale directly from the pseudomesh triangles ---
+            var faceVertices = GaMeSUtilsEditor.GetMeshFaceVertices(GaMeSUtils.TransformMesh(mesh, m_useMeshLeftHandedCS), meshTransform);
+
+            using NativeArray<InputSplatData> inputSplats = CreatePseudomeshSplatData(faceVertices);
+            using NativeArray<InputSplatData> inputSplatsColored = LoadPLYSplatFile(m_InputPointCloudFile);
+
+            if (inputSplats.Length != inputSplatsColored.Length)
+            {
+                int meshN = inputSplats.Length, plyN = inputSplatsColored.Length;
+                EditorUtility.ClearProgressBar();
+                m_ErrorMessage = $"Pseudomesh face count ({meshN}) does not match PLY splat count ({plyN}). " +
+                                 "Re-run save_pseudomesh.py against this same point_cloud.ply checkpoint.";
+                return;
+            }
+
+            using NativeArray<InputSplatData> inputSplatsWithColors = GaMeSUtilsEditor.ReplaceSplatData(inputSplats, inputSplatsColored);
+
+            if (inputSplatsWithColors.Length == 0)
+            {
+                EditorUtility.ClearProgressBar();
+                return;
+            }
+
+            // --- 5. Calculate bounds ---
+            float3 boundsMin, boundsMax;
+            var boundsJob = new CalcBoundsJob
+            {
+                m_BoundsMin = &boundsMin,
+                m_BoundsMax = &boundsMax,
+                m_SplatData = inputSplatsWithColors
+            };
+            boundsJob.Schedule().Complete();
+
+            // --- 6. Morton reordering ---
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Morton reordering", 0.05f);
+            ReorderMorton(inputSplatsWithColors, boundsMin, boundsMax);
+
+            // --- 7. SH Clustering (if needed) ---
+            NativeArray<int> splatSHIndices = default;
+            NativeArray<GaussianSplatAsset.SHTableItemFloat16> clusteredSHs = default;
+            if (m_FormatSH >= GaussianSplatAsset.SHFormat.Cluster64k)
+            {
+                EditorUtility.DisplayProgressBar(kProgressTitle, "Cluster SHs", 0.2f);
+                ClusterSHs(inputSplatsWithColors, m_FormatSH, out clusteredSHs, out splatSHIndices);
+            }
+
+            // --- 8. Create asset ---
+            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputPointCloudFile)) + "_pseudomesh";
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
+            GaussianPseudomeshSplatAsset asset = CreateInstance<GaussianPseudomeshSplatAsset>();
+            asset.Initialize(inputSplatsWithColors.Length, m_FormatPos, m_FormatScale, m_FormatColor, m_FormatSH, boundsMin, boundsMax, cameras, m_InputPointCloudFile, m_useMeshLeftHandedCS);
+            asset.SetObjPath(m_MeshResourcePath);
+            asset.name = baseName;
+
+            var dataHash = new Hash128((uint)asset.splatCount, (uint)asset.formatVersion, 0, 0);
+
+            string pathChunk = $"{m_OutputFolder}/{baseName}_chk.bytes";
+            string pathPos = $"{m_OutputFolder}/{baseName}_pos.bytes";
+            string pathOther = $"{m_OutputFolder}/{baseName}_oth.bytes";
+            string pathCol = $"{m_OutputFolder}/{baseName}_col.bytes";
+            string pathSh = $"{m_OutputFolder}/{baseName}_shs.bytes";
+            LinearizeData(inputSplatsWithColors);
+
+            // if we are using full lossless (FP32) data, then do not use any chunking, and keep data as-is
+            bool useChunks = isUsingChunks;
+            if (useChunks)
+                CreateChunkData(inputSplatsWithColors, pathChunk, ref dataHash);
+            CreatePositionsData(inputSplatsWithColors, pathPos, ref dataHash);
+            CreateOtherData(inputSplatsWithColors, pathOther, ref dataHash, splatSHIndices);
+            CreateColorData(inputSplatsWithColors, pathCol, ref dataHash);
+            CreateSHData(inputSplatsWithColors, pathSh, ref dataHash, clusteredSHs);
+            asset.SetDataHash(dataHash);
+
+            splatSHIndices.Dispose();
+            clusteredSHs.Dispose();
+
+            // files are created, import them so we can get to the imported objects, ugh
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Initial texture import", 0.85f);
+            AssetDatabase.Refresh(ImportAssetOptions.ForceUncompressedImport);
+
+            EditorUtility.DisplayProgressBar(kProgressTitle, "Setup data onto asset", 0.95f);
+            asset.SetAssetFiles(
+                useChunks ? AssetDatabase.LoadAssetAtPath<TextAsset>(pathChunk) : null,
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathPos),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathOther),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathCol),
+                AssetDatabase.LoadAssetAtPath<TextAsset>(pathSh));
 
             var assetPath = $"{m_OutputFolder}/{baseName}.asset";
             var savedAsset = CreateOrReplaceAsset(asset, assetPath);
@@ -400,7 +604,7 @@ namespace GaussianSplatting.Editor
                 ClusterSHs(inputSplats, m_FormatSH, out clusteredSHs, out splatSHIndices);
             }
 
-            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputFile));
+            string baseName = Path.GetFileNameWithoutExtension(FilePickerControl.PathToDisplayString(m_InputFile)) + "_gs";
 
             EditorUtility.DisplayProgressBar(kProgressTitle, "Creating data objects", 0.7f);
             GaussianSplatAsset asset = ScriptableObject.CreateInstance<GaussianSplatAsset>();
@@ -613,8 +817,8 @@ namespace GaussianSplatting.Editor
             }
 
             return data;
-
         }
+
 
         [BurstCompile]
         static unsafe void ReorderSHs(int splatCount, float* data)
@@ -1524,6 +1728,48 @@ namespace GaussianSplatting.Editor
             DrawFileInfo();
         }
 
+
+        private void DrawGamesPseudomeshInputGUI()
+        {
+            GUILayout.Label("Input Data", EditorStyles.boldLabel);
+
+            // Point Cloud PLY file
+            var rectCloud = EditorGUILayout.GetControlRect(true);
+            m_InputPointCloudFile = m_FilePicker.PathFieldGUI(
+                rectCloud,
+                new GUIContent("Point Cloud PLY File"),
+                m_InputPointCloudFile, "ply", "PointCloudFile"
+            );
+
+            m_MeshResourcePath = EditorGUILayout.TextField("Pseudomesh Resource Path", m_MeshResourcePath);
+
+            m_useMeshLeftHandedCS = EditorGUILayout.Toggle("L-Handed Coordinate System", m_useMeshLeftHandedCS);
+
+            // Scene object
+
+            GUILayout.Label("Preprocessing", EditorStyles.boldLabel);
+            m_ImportCameras = EditorGUILayout.Toggle("Import Cameras", m_ImportCameras);
+
+            // Update file info based on the POINT CLOUD file
+            if (m_InputPointCloudFile != m_PrevPlyPath && !string.IsNullOrWhiteSpace(m_InputPointCloudFile))
+            {
+                m_PrevVertexCount = 0;
+                m_ErrorMessage = null;
+                try
+                {
+                    m_PrevVertexCount = GaussianFileReader.ReadFileHeader(m_InputPointCloudFile);
+                    m_PrevFileSize = File.Exists(m_InputPointCloudFile) ? new FileInfo(m_InputPointCloudFile).Length : 0;
+                }
+                catch (Exception ex)
+                {
+                    m_ErrorMessage = ex.Message;
+                }
+                m_PrevPlyPath = m_InputPointCloudFile;
+            }
+
+            DrawFileInfo();
+        }
+
         private void DrawCommonOutputGUI()
         {
             EditorGUILayout.Space();
@@ -1608,9 +1854,13 @@ namespace GaussianSplatting.Editor
                 {
                     CreateAsset();
                 }
-                else
+                else if (m_SelectedMode == InputMode.GaMeS)
                 {
                     CreateGaMeSAsset();
+                }
+                else if (m_SelectedMode == InputMode.GaMeSPseudomesh)
+                {
+                    CreateGamesPseudomeshAsset();
                 }
             }
 
@@ -1674,6 +1924,4 @@ namespace GaussianSplatting.Editor
             }
         }
     }
-
-
 }
