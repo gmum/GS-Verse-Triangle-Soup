@@ -1,4 +1,4 @@
-# GS-Verse  
+# GS-Verse  (Triangle Soup)
 [![arXiv](https://img.shields.io/badge/arXiv-2510.11878-red)](https://arxiv.org/abs/2510.11878) [![Demo Scenes](https://img.shields.io/badge/Demo%20Scenes-Google%20Drive-green)](https://drive.google.com/file/d/1W1AyAVohk6ITPe2Faz6F3SPZgpz2_edP/view?usp=sharing)  [![ProjectPage](https://img.shields.io/badge/Website-anastasiya999.github.io/GSVerse/-blue)](https://anastasiya999.github.io/GS-Verse/)
 
 **This is a fork of [GS-Verse](https://github.com/Anastasiya999/GS-Verse)** extending it with a second GaMeS parameterization, the mesh-free **Triangle Soup / Pseudomesh** representation, alongside the original mesh-based pipeline. Developed as part of an MSc thesis at the Jagiellonian University (Daniel Barczyk, 2026, supervised by dr hab. Przemysław Spurek, prof. UJ). See [Pseudomesh (Triangle Soup) Extension](#pseudomesh-triangle-soup-extension) below for what's new, and the [upstream repository](https://github.com/Anastasiya999/GS-Verse) for the original GS-Verse system and paper.
